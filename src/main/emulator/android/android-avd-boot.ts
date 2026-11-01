@@ -9,7 +9,11 @@ import type { AndroidCommandRunner } from './android-command-runner'
 import type { AndroidSdkPaths } from './android-sdk-discovery'
 import { bootCompletedArgs, isBootCompleted } from './adb-devices'
 import { bootAvdArgs, listAvdsArgs, parseAvdList } from './avd-manager'
-import { findRunningAvdSerial, listRunningAdbDevices } from './android-device-inventory'
+import {
+  findRunningAvdSerial,
+  listAdbEmulatorsInAnyState,
+  listRunningAdbDevices
+} from './android-device-inventory'
 import { emulatorProbeError } from '../emulator-probe'
 
 export type AndroidBootOptions = {
@@ -97,18 +101,10 @@ async function waitForNewBootedSerial(
 ): Promise<string> {
   let waited = 0
   while (waited < options.bootTimeoutMs) {
+    // Read before polling so an instance that appeared as our launch ended is still seen.
     const endReason = launch.endReason()
-    if (endReason !== null) {
-      throw new EmulatorError(
-        'emulator_helper_failed',
-        emulatorFailureText('avdExitedBeforeBoot', {
-          avdName,
-          detail: (await readEmulatorExitDetail(launch.logPath)) || endReason
-        })
-      )
-    }
-    const fresh = (await listRunningAdbDevices(runner, sdk)).filter(
-      (device) => device.isEmulator && !known.has(device.serial)
+    const fresh = (await listAdbEmulatorsInAnyState(runner, sdk)).filter(
+      (device) => !known.has(device.serial)
     )
     const serial = await findRunningAvdSerial(runner, sdk, avdName, fresh)
     if (serial) {
@@ -116,6 +112,15 @@ async function waitForNewBootedSerial(
       if (isBootCompleted(booted.stdout)) {
         return serial
       }
+    } else if (endReason !== null) {
+      // Our launch exits on the AVD lock when another instance is booting; fail only when none is.
+      throw new EmulatorError(
+        'emulator_helper_failed',
+        emulatorFailureText('avdExitedBeforeBoot', {
+          avdName,
+          detail: (await readEmulatorExitDetail(launch.logPath)) || endReason
+        })
+      )
     }
     await options.sleep(options.pollIntervalMs)
     waited += options.pollIntervalMs

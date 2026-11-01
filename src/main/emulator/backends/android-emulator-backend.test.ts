@@ -358,28 +358,57 @@ describe('AndroidEmulatorBackend', () => {
     )
   })
 
-  it('fails with the emulator output when the AVD exits before booting', async () => {
+  function launchExitsWith(output: string): void {
     vi.mocked(spawn).mockImplementation((_command, _args, options) => {
       const child = new ChildProcess()
-      const output = options.stdio
-      if (Array.isArray(output) && typeof output[1] === 'number') {
-        writeSync(
-          output[1],
-          'INFO         | Android emulator version 37.2.12.0\n' +
-            'WARNING      | /sdk/system-images/android-35/google_apis/arm64-v8a/ is not a valid directory.\n' +
-            'WARNING      | emulator has searched the above paths but found no valid sdk root directory.\n' +
-            'FATAL        | Cannot find AVD system path. Please define ANDROID_SDK_ROOT\n\n'
-        )
+      const stdio = options.stdio
+      if (Array.isArray(stdio) && typeof stdio[1] === 'number') {
+        writeSync(stdio[1], output)
       }
       setImmediate(() => child.emit('exit', 1, null))
       return child
     })
-    const yieldToExit = () => new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  const yieldToExit = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+  it('fails with the emulator output when the AVD exits before booting', async () => {
+    launchExitsWith(
+      'INFO         | Android emulator version 37.2.12.0\n' +
+        'WARNING      | /sdk/system-images/android-35/google_apis/arm64-v8a/ is not a valid directory.\n' +
+        'WARNING      | emulator has searched the above paths but found no valid sdk root directory.\n' +
+        'FATAL        | Cannot find AVD system path. Please define ANDROID_SDK_ROOT\n\n'
+    )
     await expect(backend(runner, yieldToExit).ensureBooted('Pixel_Tablet')).rejects.toThrow(
       'AVD "Pixel_Tablet" stopped before it finished booting: ' +
         'WARNING | /sdk/system-images/android-35/google_apis/arm64-v8a/ is not a valid directory.\n' +
         'WARNING | emulator has searched the above paths but found no valid sdk root directory.\n' +
         'FATAL | Cannot find AVD system path. Please define ANDROID_SDK_ROOT'
+    )
+  })
+
+  it('waits for an instance booting elsewhere when the launch exits on the AVD lock', async () => {
+    launchExitsWith(
+      'FATAL        | Running multiple emulators with the same AVD is an experimental feature.\n'
+    )
+    const states = ['offline', 'offline', 'device']
+    const bootRunner = vi.fn(async (binary: string, args: readonly string[]) => {
+      const a = args.join(' ')
+      if (binary === SDK.adb && a === 'devices -l') {
+        return ok(`List of devices attached\nemulator-5556\t${states.shift() ?? 'device'}`)
+      }
+      if (binary === SDK.adb && a === '-s emulator-5556 emu avd name') {
+        return ok('Pixel_Tablet\nOK\n')
+      }
+      if (binary === SDK.adb && a === '-s emulator-5556 shell getprop sys.boot_completed') {
+        return ok(states.length === 0 ? '1' : '')
+      }
+      if (binary === SDK.emulator && a === '-list-avds') {
+        return ok('Pixel_Tablet')
+      }
+      return ok('')
+    })
+    await expect(backend(bootRunner, yieldToExit).ensureBooted('Pixel_Tablet')).resolves.toBe(
+      'emulator-5556'
     )
   })
 
