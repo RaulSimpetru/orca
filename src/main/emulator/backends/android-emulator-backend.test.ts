@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChildProcess, spawn } from 'node:child_process'
-import { writeSync } from 'node:fs'
+import { PassThrough } from 'node:stream'
 import { AndroidEmulatorBackend } from './android-emulator-backend'
 import { scrcpyVideoRegistry } from '../scrcpy-video-registry'
 import type { AndroidCommandResult, AndroidCommandRunner } from '../android/android-command-runner'
@@ -359,12 +359,11 @@ describe('AndroidEmulatorBackend', () => {
   })
 
   function launchExitsWith(output: string): void {
-    vi.mocked(spawn).mockImplementation((_command, _args, options) => {
+    vi.mocked(spawn).mockImplementation(() => {
       const child = new ChildProcess()
-      const stdio = options.stdio
-      if (Array.isArray(stdio) && typeof stdio[1] === 'number') {
-        writeSync(stdio[1], output)
-      }
+      const stdout = new PassThrough()
+      child.stdout = stdout
+      stdout.end(output)
       setImmediate(() => child.emit('exit', 1, null))
       return child
     })

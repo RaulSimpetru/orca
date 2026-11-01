@@ -1,8 +1,4 @@
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { open, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { EmulatorError } from '../emulator-errors'
 import { emulatorFailureText } from '../../../shared/emulator-failure-copy'
 import type { AndroidCommandRunner } from './android-command-runner'
@@ -23,11 +19,13 @@ export type AndroidBootOptions = {
 }
 
 type AvdLaunch = {
-  logPath: string
   // Non-null once the emulator process has ended or failed to start.
   endReason: () => string | null
+  outputTail: () => string
+  closeOutput: () => void
 }
 
+const OUTPUT_TAIL_CHARS = 4096
 const EXIT_DETAIL_LINES = 3
 
 export async function bootAndroidDevice(
@@ -53,42 +51,45 @@ export async function bootAndroidDevice(
     )
   }
   const known = new Set(running.map((device) => device.serial))
-  const logPath = join(tmpdir(), `orca-avd-launch-${randomUUID()}.log`)
+  const launch = launchAvd(sdk.emulator, deviceOrName)
   try {
-    const launch = await launchAvd(sdk.emulator, deviceOrName, logPath)
     return await waitForNewBootedSerial(runner, sdk, deviceOrName, known, launch, options)
   } finally {
-    await rm(logPath, { force: true }).catch(() => {})
+    launch.closeOutput()
   }
 }
 
-// Unrefed hidden spawn: detached Windows emulators open consoles. Output goes to a file, not a
-// pipe, because the emulator outlives this wait and Orca, and a closed pipe could kill it.
-async function launchAvd(
-  emulatorPath: string,
-  avdName: string,
-  logPath: string
-): Promise<AvdLaunch> {
-  const log = await open(logPath, 'wx', 0o600)
+// Unrefed hidden spawn: detached Windows emulators open consoles. Output is piped only for the
+// boot wait; the emulator ignores SIGPIPE, so it keeps running after the pipes close.
+function launchAvd(emulatorPath: string, avdName: string): AvdLaunch {
+  const child = spawn(emulatorPath, [...bootAvdArgs(avdName), '-no-window'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
+  })
+  let output = ''
   let endReason: string | null = null
-  try {
-    const child = spawn(emulatorPath, [...bootAvdArgs(avdName), '-no-window'], {
-      stdio: ['ignore', log.fd, log.fd],
-      windowsHide: true
-    })
-    // Handle spawn errors here so the boot poll reports failure instead of crashing main.
-    child.on('error', (error) => {
-      emulatorProbeError('emulator.launch.fail', error, { avdName })
-      endReason ??= error.message
-    })
-    child.on('exit', (code, signal) => {
-      endReason ??= signal ? `signal ${signal}` : `exit code ${code}`
-    })
-    child.unref()
-  } finally {
-    await log.close()
+  const collect = (chunk: Buffer): void => {
+    output = (output + chunk.toString('utf8')).slice(-OUTPUT_TAIL_CHARS)
   }
-  return { logPath, endReason: () => endReason }
+  child.stdout?.on('data', collect)
+  child.stderr?.on('data', collect)
+  // Handle spawn errors here so the boot poll reports failure instead of crashing main.
+  child.on('error', (error) => {
+    emulatorProbeError('emulator.launch.fail', error, { avdName })
+    endReason ??= error.message
+  })
+  child.on('exit', (code, signal) => {
+    endReason ??= signal ? `signal ${signal}` : `exit code ${code}`
+  })
+  child.unref()
+  return {
+    endReason: () => endReason,
+    outputTail: () => output,
+    closeOutput: () => {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+    }
+  }
 }
 
 async function waitForNewBootedSerial(
@@ -118,7 +119,7 @@ async function waitForNewBootedSerial(
         'emulator_helper_failed',
         emulatorFailureText('avdExitedBeforeBoot', {
           avdName,
-          detail: (await readEmulatorExitDetail(launch.logPath)) || endReason
+          detail: emulatorExitDetail(launch.outputTail()) || endReason
         })
       )
     }
@@ -132,8 +133,7 @@ async function waitForNewBootedSerial(
 }
 
 // The emulator prints its reason last, e.g. a missing system image then "FATAL | Cannot find AVD system path".
-async function readEmulatorExitDetail(logPath: string): Promise<string> {
-  const output = await readFile(logPath, 'utf8').catch(() => '')
+function emulatorExitDetail(output: string): string {
   return output
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+/g, ' ').trim())
