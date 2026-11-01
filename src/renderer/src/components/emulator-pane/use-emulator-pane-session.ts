@@ -19,7 +19,6 @@ import { shutdownManagedSimulatorIfNoPane } from '@/lib/simulator-pane-shutdown-
 import { buildPrelaunchedEmulatorSessionState } from './emulator-prelaunched-session'
 import { useEmulatorPaneManualLaunchEvents } from './use-emulator-pane-manual-launch-events'
 import { buildEmulatorPaneSessionView } from './emulator-pane-session-view'
-import { resolveEmulatorAttachTarget } from './emulator-attach-target'
 import { useEmulatorPaneLifecycle } from './use-emulator-pane-lifecycle'
 import { useEmulatorPaneShutdown } from './use-emulator-pane-shutdown'
 import {
@@ -180,17 +179,15 @@ export function useEmulatorPaneSession({
         if (list.length === 0 && deviceRefreshErrorRef.current) {
           throw deviceRefreshErrorRef.current
         }
-        const target = resolveEmulatorAttachTarget({
-          configuredDefaultUdid,
-          devices: list,
-          deviceTarget,
-          selectedUdid
-        })
-        if (!target) {
+        if (list.length === 0) {
           throw noEmulatorDevicesError()
         }
+        // Untargeted attaches let the host choose so a live workspace session is kept.
+        const target = deviceTarget
         requestedTarget = target
-        setSelectedUdid(target)
+        if (target) {
+          setSelectedUdid(target)
+        }
         if (target !== liveTargetRef.current) {
           // Clear the old device’s frame so switching shows a connecting state.
           setSession(null)
@@ -234,17 +231,7 @@ export function useEmulatorPaneSession({
         }
       }
     },
-    [
-      applySession,
-      configuredDefaultUdid,
-      devices,
-      loading,
-      refreshDevices,
-      resetVisualOrientation,
-      selectedUdid,
-      tabId,
-      worktreeId
-    ]
+    [applySession, devices, loading, refreshDevices, resetVisualOrientation, tabId, worktreeId]
   )
 
   useEffect(() => {
