@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { spawn } from 'node:child_process'
+import { ChildProcess, spawn } from 'node:child_process'
+import { writeSync } from 'node:fs'
 import { AndroidEmulatorBackend } from './android-emulator-backend'
 import { scrcpyVideoRegistry } from '../scrcpy-video-registry'
 import type { AndroidCommandResult, AndroidCommandRunner } from '../android/android-command-runner'
@@ -42,11 +43,14 @@ function defaultRunner(): ReturnType<typeof vi.fn> {
   })
 }
 
-function backend(runner: ReturnType<typeof vi.fn>): AndroidEmulatorBackend {
+function backend(
+  runner: ReturnType<typeof vi.fn>,
+  sleep: (ms: number) => Promise<void> = async () => {}
+): AndroidEmulatorBackend {
   return new AndroidEmulatorBackend({
     runner: runner as unknown as AndroidCommandRunner,
     sdk: SDK,
-    sleep: async () => {}
+    sleep
   })
 }
 
@@ -346,6 +350,31 @@ describe('AndroidEmulatorBackend', () => {
       SDK.emulator,
       ['-avd', 'Pixel_Tablet', '-no-window'],
       expect.objectContaining({ windowsHide: true })
+    )
+  })
+
+  it('fails with the emulator output when the AVD exits before booting', async () => {
+    vi.mocked(spawn).mockImplementation((_command, _args, options) => {
+      const child = new ChildProcess()
+      const output = options.stdio
+      if (Array.isArray(output) && typeof output[1] === 'number') {
+        writeSync(
+          output[1],
+          'INFO         | Android emulator version 37.2.12.0\n' +
+            'WARNING      | /sdk/system-images/android-35/google_apis/arm64-v8a/ is not a valid directory.\n' +
+            'WARNING      | emulator has searched the above paths but found no valid sdk root directory.\n' +
+            'FATAL        | Cannot find AVD system path. Please define ANDROID_SDK_ROOT\n\n'
+        )
+      }
+      setImmediate(() => child.emit('exit', 1, null))
+      return child
+    })
+    const yieldToExit = () => new Promise<void>((resolve) => setImmediate(resolve))
+    await expect(backend(runner, yieldToExit).ensureBooted('Pixel_Tablet')).rejects.toThrow(
+      'AVD "Pixel_Tablet" stopped before it finished booting: ' +
+        'WARNING | /sdk/system-images/android-35/google_apis/arm64-v8a/ is not a valid directory.\n' +
+        'WARNING | emulator has searched the above paths but found no valid sdk root directory.\n' +
+        'FATAL | Cannot find AVD system path. Please define ANDROID_SDK_ROOT'
     )
   })
 

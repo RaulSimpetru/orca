@@ -128,11 +128,12 @@ export const EMULATOR_HANDLERS: Record<string, CommandHandler> = {
     const target = await getEmulatorCommandTarget(flags, cwd, client)
     const device = getOptionalStringFlag(flags, 'device')
     const focus = flags.get('focus') === true
-    // Cold boots and wedged-simulator recovery can exceed the normal RPC timeout.
+    // Cold boots and wedged-simulator recovery can exceed the normal RPC timeout. Outlast the
+    // host's 180 s Android boot wait so its own error reaches the user, not a client timeout.
     const res = await client.call(
       'emulator.attach',
       { device, worktree: target.worktree, focus },
-      { timeoutMs: 180_000 }
+      { timeoutMs: 240_000 }
     )
     printResult(res, json, (r: unknown) => {
       const result = r as EmulatorAttachResult
