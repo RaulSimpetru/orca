@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChildProcess, spawn } from 'node:child_process'
-import { PassThrough } from 'node:stream'
+import { spawn } from 'node:child_process'
 import { AndroidEmulatorBackend } from './android-emulator-backend'
 import { scrcpyVideoRegistry } from '../scrcpy-video-registry'
+import { createFakeSpawnedChild } from '../../../shared/__fixtures__/fake-spawned-child'
 import type { AndroidCommandResult, AndroidCommandRunner } from '../android/android-command-runner'
 import type { AndroidSdkPaths } from '../android/android-sdk-discovery'
 
@@ -360,10 +360,8 @@ describe('AndroidEmulatorBackend', () => {
 
   function launchExitsWith(output: string): void {
     vi.mocked(spawn).mockImplementation(() => {
-      const child = new ChildProcess()
-      const stdout = new PassThrough()
-      child.stdout = stdout
-      stdout.end(output)
+      const child = createFakeSpawnedChild()
+      child.stdout.end(output)
       setImmediate(() => child.emit('exit', 1, null))
       return child
     })
@@ -386,14 +384,18 @@ describe('AndroidEmulatorBackend', () => {
   })
 
   it('waits for an instance booting elsewhere when the launch exits on the AVD lock', async () => {
+    // The third listing fails, which must not read as "no instance".
     launchExitsWith(
       'FATAL        | Running multiple emulators with the same AVD is an experimental feature.\n'
     )
-    const states = ['offline', 'offline', 'device']
+    const states = ['offline', 'offline', 'failed', 'device']
     const bootRunner = vi.fn(async (binary: string, args: readonly string[]) => {
       const a = args.join(' ')
       if (binary === SDK.adb && a === 'devices -l') {
-        return ok(`List of devices attached\nemulator-5556\t${states.shift() ?? 'device'}`)
+        const state = states.shift() ?? 'device'
+        return state === 'failed'
+          ? { stdout: '', stderr: 'adb server not responding', code: 1 }
+          : ok(`List of devices attached\nemulator-5556\t${state}`)
       }
       if (binary === SDK.adb && a === '-s emulator-5556 emu avd name') {
         return ok('Pixel_Tablet\nOK\n')

@@ -12,13 +12,15 @@ export async function listRunningAdbDevices(
   return parseAdbDevices(result.stdout).filter((device) => device.state === 'device')
 }
 
-// Includes emulators still booting ("offline"); they already answer `emu avd name`.
+// Includes emulators still booting ("offline"); they already answer `emu avd name`. Null when adb fails.
 export async function listAdbEmulatorsInAnyState(
   runner: AndroidCommandRunner,
   sdk: AndroidSdkPaths
-): Promise<AndroidAdbDevice[]> {
+): Promise<AndroidAdbDevice[] | null> {
   const result = await runner(sdk.adb, adbDevicesArgs)
-  return parseAdbDevices(result.stdout).filter((device) => device.isEmulator)
+  return result.code === 0
+    ? parseAdbDevices(result.stdout).filter((device) => device.isEmulator)
+    : null
 }
 
 /** Null when adb fails, so a failed census never reads as every device gone. */

@@ -78,8 +78,11 @@ function launchAvd(emulatorPath: string, avdName: string): AvdLaunch {
     emulatorProbeError('emulator.launch.fail', error, { avdName })
     endReason ??= error.message
   })
+  // A clean exit may be a launcher handing off to qemu, so only a failed exit ends the wait early.
   child.on('exit', (code, signal) => {
-    endReason ??= signal ? `signal ${signal}` : `exit code ${code}`
+    if (signal || code !== 0) {
+      endReason ??= signal ? `signal ${signal}` : `exit code ${code}`
+    }
   })
   child.unref()
   return {
@@ -104,17 +107,17 @@ async function waitForNewBootedSerial(
   while (waited < options.bootTimeoutMs) {
     // Read before polling so an instance that appeared as our launch ended is still seen.
     const endReason = launch.endReason()
-    const fresh = (await listAdbEmulatorsInAnyState(runner, sdk)).filter(
-      (device) => !known.has(device.serial)
-    )
+    const emulators = await listAdbEmulatorsInAnyState(runner, sdk)
+    const fresh = (emulators ?? []).filter((device) => !known.has(device.serial))
     const serial = await findRunningAvdSerial(runner, sdk, avdName, fresh)
     if (serial) {
       const booted = await runner(sdk.adb, bootCompletedArgs(serial))
       if (isBootCompleted(booted.stdout)) {
         return serial
       }
-    } else if (endReason !== null) {
-      // Our launch exits on the AVD lock when another instance is booting; fail only when none is.
+    } else if (endReason !== null && emulators !== null) {
+      // Our launch exits on the AVD lock when another instance is booting, so fail only when a
+      // successful adb listing shows none.
       throw new EmulatorError(
         'emulator_helper_failed',
         emulatorFailureText('avdExitedBeforeBoot', {
