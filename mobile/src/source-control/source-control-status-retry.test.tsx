@@ -31,8 +31,16 @@ vi.mock('./MobileCommitsScreen', () => ({
   MobileCommitPageHost: ({ children }: { children: (openCommit: () => void) => unknown }) =>
     children(() => {})
 }))
-vi.mock('../components/pr-sidebar/MobilePrViewPanel', () => ({ MobilePrViewPanelBody: () => null }))
 vi.mock('../components/mobile-pr-url', () => ({ openMobilePrUrl: () => {} }))
+vi.mock('../components/MobilePRSidebar', () => ({ MobilePrTabBody: () => null }))
+vi.mock('../components/pr-sidebar/MobilePrTabSheets', () => ({ MobilePrTabSheets: () => null }))
+vi.mock('../components/pr-sidebar/PrChecksScreen', () => ({ PrChecksScreen: () => null }))
+vi.mock('../components/pr-sidebar/PrCommentsScreen', () => ({ PrCommentsScreen: () => null }))
+vi.mock('../components/pr-sidebar/use-mobile-pr-tab', () => ({
+  useMobilePrTab: () => ({ openCreatePrSheet: () => {} })
+}))
+vi.mock('../components/pr-sidebar/use-pr-tab-menu', () => ({ usePrTabMenuGroups: () => null }))
+vi.mock('../navigation/use-back-claim', () => ({ useBackClaim: () => {} }))
 vi.mock('./use-mobile-source-control-action-sheet', () => ({
   useMobileSourceControlActionSheet: () => ({})
 }))
