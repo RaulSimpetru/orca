@@ -318,7 +318,7 @@ describe('AndroidEmulatorBackend', () => {
     expect(tree.children[0]).toMatchObject({ text: 'Hi' })
   })
 
-  it('boots a shutdown AVD and waits for the new booted serial', async () => {
+  it('boots a shutdown AVD once for concurrent callers and waits for its serial', async () => {
     let bootStarted = false
     vi.mocked(spawn).mockImplementation(() => {
       bootStarted = true
@@ -344,8 +344,13 @@ describe('AndroidEmulatorBackend', () => {
       }
       return ok('')
     })
-    const serial = await backend(bootRunner).ensureBooted('Pixel_Tablet')
-    expect(serial).toBe('emulator-5556')
+    const android = backend(bootRunner)
+    const serials = await Promise.all([
+      android.ensureBooted('Pixel_Tablet'),
+      android.ensureBooted('Pixel_Tablet')
+    ])
+    expect(serials).toEqual(['emulator-5556', 'emulator-5556'])
+    expect(spawn).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(
       SDK.emulator,
       ['-avd', 'Pixel_Tablet', '-no-window'],

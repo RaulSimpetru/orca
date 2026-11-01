@@ -77,6 +77,8 @@ export class AndroidEmulatorBackend implements EmulatorBackend {
   private readonly streamMaxSize: number
   private readonly streams: AndroidStreamController
   private readonly input: AndroidDeviceInput
+  // A second launch of a booting AVD exits on its lock, so concurrent attaches share one boot.
+  private readonly bootsInFlight = new Map<string, Promise<string>>()
 
   constructor(options: AndroidEmulatorBackendOptions = {}) {
     this.runner = options.runner ?? execFileAndroidCommandRunner
@@ -277,11 +279,17 @@ export class AndroidEmulatorBackend implements EmulatorBackend {
   }
 
   async ensureBooted(deviceOrName: string): Promise<string> {
-    return bootAndroidDevice(this.runner, this.requireSdk(), deviceOrName, {
+    const inFlight = this.bootsInFlight.get(deviceOrName)
+    if (inFlight) {
+      return inFlight
+    }
+    const boot = bootAndroidDevice(this.runner, this.requireSdk(), deviceOrName, {
       bootTimeoutMs: this.bootTimeoutMs,
       pollIntervalMs: this.pollIntervalMs,
       sleep: this.sleep
-    })
+    }).finally(() => this.bootsInFlight.delete(deviceOrName))
+    this.bootsInFlight.set(deviceOrName, boot)
+    return boot
   }
 
   private requireSdk(): AndroidSdkPaths {

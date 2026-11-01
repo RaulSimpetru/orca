@@ -49,18 +49,22 @@ export async function bootAndroidDevice(
     )
   }
   const known = new Set(running.map((device) => device.serial))
-  const launch = await launchAvd(sdk.emulator, deviceOrName)
+  const logPath = join(tmpdir(), `orca-avd-launch-${randomUUID()}.log`)
   try {
+    const launch = await launchAvd(sdk.emulator, deviceOrName, logPath)
     return await waitForNewBootedSerial(runner, sdk, deviceOrName, known, launch, options)
   } finally {
-    await rm(launch.logPath, { force: true }).catch(() => {})
+    await rm(logPath, { force: true }).catch(() => {})
   }
 }
 
 // Unrefed hidden spawn: detached Windows emulators open consoles. Output goes to a file, not a
 // pipe, because the emulator outlives this wait and Orca, and a closed pipe could kill it.
-async function launchAvd(emulatorPath: string, avdName: string): Promise<AvdLaunch> {
-  const logPath = join(tmpdir(), `orca-avd-launch-${randomUUID()}.log`)
+async function launchAvd(
+  emulatorPath: string,
+  avdName: string,
+  logPath: string
+): Promise<AvdLaunch> {
   const log = await open(logPath, 'wx', 0o600)
   let endReason: string | null = null
   try {
