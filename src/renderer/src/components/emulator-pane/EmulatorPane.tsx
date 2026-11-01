@@ -3,6 +3,7 @@ import { EmulatorPaneToolbar } from './emulator-pane-toolbar'
 import { EmulatorDeviceFrame } from './emulator-device-frame'
 import { MobileEmulatorAgentSetupGuideLayer } from './MobileEmulatorAgentSetupGuideLayer'
 import { useEmulatorPaneSession } from './use-emulator-pane-session'
+import { useEmulatorInputCheck } from './use-emulator-input-check'
 import { translate } from '@/i18n/i18n'
 import { useUiLanguageRevision } from '@/i18n/use-ui-language-revision'
 
@@ -20,6 +21,7 @@ export default function EmulatorPane({ tab, worktreeId, isActive = true }: Emula
     selectedUdid,
     setSelectedUdid,
     loading,
+    session,
     error,
     attach,
     shutdown,
@@ -38,6 +40,11 @@ export default function EmulatorPane({ tab, worktreeId, isActive = true }: Emula
     tabId: tab?.id,
     autoAttachOnMount: isActive
   })
+  const { inputError, checkOnInteraction } = useEmulatorInputCheck(
+    worktreeId,
+    session?.attached ? session.info?.deviceUdid || session.info?.device || null : null
+  )
+  const visibleError = error ?? inputError
 
   return (
     <div
@@ -60,13 +67,17 @@ export default function EmulatorPane({ tab, worktreeId, isActive = true }: Emula
         onRotate={() => void sendRotate()}
       />
 
-      {error ? (
+      {visibleError ? (
         <div className="border-b border-border bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {error}
+          {visibleError}
         </div>
       ) : null}
 
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-muted px-3 py-6">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-muted px-3 py-6"
+        onPointerDownCapture={checkOnInteraction}
+        onWheelCapture={checkOnInteraction}
+      >
         <MobileEmulatorAgentSetupGuideLayer isActive={isActive}>
           {!isLive && !loading ? (
             <p className="mb-4 text-center text-xs text-muted-foreground">
