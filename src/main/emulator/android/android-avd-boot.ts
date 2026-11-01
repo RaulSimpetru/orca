@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createOutputSink } from '@orca/process-host/bounded-output-sink'
 import { EmulatorError } from '../emulator-errors'
 import { emulatorFailureText } from '../../../shared/emulator-failure-copy'
 import type { AndroidCommandRunner } from './android-command-runner'
@@ -7,7 +8,7 @@ import { bootCompletedArgs, isBootCompleted } from './adb-devices'
 import { bootAvdArgs, listAvdsArgs, parseAvdList } from './avd-manager'
 import {
   findRunningAvdSerial,
-  listAdbEmulatorsInAnyState,
+  listConfirmedAdbDevices,
   listRunningAdbDevices
 } from './android-device-inventory'
 import { emulatorProbeError } from '../emulator-probe'
@@ -19,13 +20,12 @@ export type AndroidBootOptions = {
 }
 
 type AvdLaunch = {
-  // Non-null once the emulator process has ended or failed to start.
-  endReason: () => string | null
-  outputTail: () => string
+  // Non-null once the launch failed (spawn error, non-zero exit or signal): its last output lines.
+  failureDetail: () => string | null
   closeOutput: () => void
 }
 
-const OUTPUT_TAIL_CHARS = 4096
+const OUTPUT_TAIL_BYTES = 4096
 const EXIT_DETAIL_LINES = 3
 
 export async function bootAndroidDevice(
@@ -66,13 +66,10 @@ function launchAvd(emulatorPath: string, avdName: string): AvdLaunch {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
-  let output = ''
+  const output = createOutputSink(OUTPUT_TAIL_BYTES, 'tail')
   let endReason: string | null = null
-  const collect = (chunk: Buffer): void => {
-    output = (output + chunk.toString('utf8')).slice(-OUTPUT_TAIL_CHARS)
-  }
-  child.stdout?.on('data', collect)
-  child.stderr?.on('data', collect)
+  child.stdout?.on('data', output.write)
+  child.stderr?.on('data', output.write)
   // Handle spawn errors here so the boot poll reports failure instead of crashing main.
   child.on('error', (error) => {
     emulatorProbeError('emulator.launch.fail', error, { avdName })
@@ -86,8 +83,8 @@ function launchAvd(emulatorPath: string, avdName: string): AvdLaunch {
   })
   child.unref()
   return {
-    endReason: () => endReason,
-    outputTail: () => output,
+    failureDetail: () =>
+      endReason === null ? null : emulatorExitDetail(output.text()) || endReason,
     closeOutput: () => {
       child.stdout?.destroy()
       child.stderr?.destroy()
@@ -103,31 +100,28 @@ async function waitForNewBootedSerial(
   launch: AvdLaunch,
   options: AndroidBootOptions
 ): Promise<string> {
-  let waited = 0
-  while (waited < options.bootTimeoutMs) {
+  // Wall clock, so adb call time counts toward the timeout the CLI's attach timeout outlasts.
+  const deadline = performance.now() + options.bootTimeoutMs
+  while (performance.now() < deadline) {
     // Read before polling so an instance that appeared as our launch ended is still seen.
-    const endReason = launch.endReason()
-    const emulators = await listAdbEmulatorsInAnyState(runner, sdk)
-    const fresh = (emulators ?? []).filter((device) => !known.has(device.serial))
+    const failureDetail = launch.failureDetail()
+    const devices = await listConfirmedAdbDevices(runner, sdk)
+    const fresh = (devices ?? []).filter((device) => device.isEmulator && !known.has(device.serial))
     const serial = await findRunningAvdSerial(runner, sdk, avdName, fresh)
     if (serial) {
       const booted = await runner(sdk.adb, bootCompletedArgs(serial))
       if (isBootCompleted(booted.stdout)) {
         return serial
       }
-    } else if (endReason !== null && emulators !== null) {
+    } else if (failureDetail !== null && devices !== null) {
       // Our launch exits on the AVD lock when another instance is booting, so fail only when a
       // successful adb listing shows none.
       throw new EmulatorError(
         'emulator_helper_failed',
-        emulatorFailureText('avdExitedBeforeBoot', {
-          avdName,
-          detail: emulatorExitDetail(launch.outputTail()) || endReason
-        })
+        emulatorFailureText('avdExitedBeforeBoot', { avdName, detail: failureDetail })
       )
     }
     await options.sleep(options.pollIntervalMs)
-    waited += options.pollIntervalMs
   }
   throw new EmulatorError(
     'emulator_helper_failed',

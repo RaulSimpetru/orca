@@ -39,6 +39,7 @@ import {
 } from '../android/android-stream-session-starter'
 import { AndroidStreamController } from '../android/android-stream-controller'
 import { scrcpyVideoRegistry } from '../scrcpy-video-registry'
+import { ANDROID_AVD_BOOT_TIMEOUT_MS } from '../../../shared/emulator-attach-timeouts'
 import type { EmulatorGesturePoint } from '../emulator-gesture-sender'
 
 export type AndroidEmulatorBackendOptions = {
@@ -53,7 +54,6 @@ export type AndroidEmulatorBackendOptions = {
   streamMaxSize?: number
 }
 
-const DEFAULT_BOOT_TIMEOUT_MS = 180_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 
 export class AndroidEmulatorBackend implements EmulatorBackend {
@@ -83,7 +83,7 @@ export class AndroidEmulatorBackend implements EmulatorBackend {
   constructor(options: AndroidEmulatorBackendOptions = {}) {
     this.runner = options.runner ?? execFileAndroidCommandRunner
     this.sdkState = new AndroidSdkState(options.sdk !== undefined, options.sdk ?? null)
-    this.bootTimeoutMs = options.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS
+    this.bootTimeoutMs = options.bootTimeoutMs ?? ANDROID_AVD_BOOT_TIMEOUT_MS
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     this.sleep = options.sleep ?? defaultSleep
     this.ensureJar = options.ensureJar ?? ensureScrcpyServerJar
