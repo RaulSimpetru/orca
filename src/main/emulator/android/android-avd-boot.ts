@@ -27,6 +27,9 @@ type AvdLaunch = {
 
 const OUTPUT_TAIL_BYTES = 4096
 const EXIT_DETAIL_LINES = 3
+// adb lists a new emulator ~1.5 s after launch; an empty listing proves no other instance of the
+// AVD is booting only after this many polls (~4 s).
+const ADB_REGISTRATION_POLLS = 2
 
 export async function bootAndroidDevice(
   runner: AndroidCommandRunner,
@@ -102,7 +105,7 @@ async function waitForNewBootedSerial(
 ): Promise<string> {
   // Wall clock, so adb call time counts toward the timeout the CLI's attach timeout outlasts.
   const deadline = performance.now() + options.bootTimeoutMs
-  while (performance.now() < deadline) {
+  for (let poll = 0; performance.now() < deadline; poll++) {
     // Read before polling so an instance that appeared as our launch ended is still seen.
     const failureDetail = launch.failureDetail()
     const devices = await listConfirmedAdbDevices(runner, sdk)
@@ -113,7 +116,7 @@ async function waitForNewBootedSerial(
       if (isBootCompleted(booted.stdout)) {
         return serial
       }
-    } else if (failureDetail !== null && devices !== null) {
+    } else if (failureDetail !== null && devices !== null && poll >= ADB_REGISTRATION_POLLS) {
       // Our launch exits on the AVD lock when another instance is booting, so fail only when a
       // successful adb listing shows none.
       throw new EmulatorError(
