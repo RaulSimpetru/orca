@@ -14,6 +14,7 @@ import type { SourceControlHubTab } from './mobile-source-control-hub-tab'
 
 type Args = {
   state: MobileSourceControlState
+  activeTab: SourceControlHubTab
   worktreeId: string
   prController: MobilePrSidebarController
   prBranch: string | null
@@ -28,6 +29,7 @@ type Args = {
 // The hub's wiring of the PR tab: its state, Create PR follow-through, pushed screens and ⋯ menu.
 export function useMobileSourceControlPrTab({
   state,
+  activeTab,
   worktreeId,
   prController,
   prBranch,
@@ -99,6 +101,8 @@ export function useMobileSourceControlPrTab({
     ]
   )
   const prTab = useMobilePrTab({
+    // Comments keep their threads fresh; the tab and Checks need only the PR and its checks.
+    live: prScreen === 'comments' ? 'details' : prScreen || activeTab === 'pr' ? 'checks' : false,
     state: prTabState,
     refetch: refetchPr,
     client,

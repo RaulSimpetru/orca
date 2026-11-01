@@ -91,7 +91,6 @@ export function MobileSourceControlPanel({
   }, [])
   const openHistoryTab = useCallback(() => selectTab('history'), [selectTab])
   const openPrTab = useCallback(() => selectTab('pr'), [selectTab])
-  // The PR tab owns the Create PR sheet; Changes-tab entry points reach it through this ref.
   const openCreatePrRef = useRef<() => void>(() => {})
   const openCreatePr = useCallback(() => openCreatePrRef.current(), [])
 
@@ -245,19 +244,19 @@ export function MobileSourceControlPanel({
     void refetchPr({ includeDetails: false })
   }, [activeTab, isHostedRepo, loadStatus, refetchPr])
 
-  const { prTab, prScreen, setPrScreen, prMenuGroups, branchCompare } = useMobileSourceControlPrTab(
-    {
-      state,
-      worktreeId,
-      prController,
-      prBranch,
-      prHeadSha,
-      ready,
-      selectTab,
-      onRefresh,
-      openCreatePrRef
-    }
-  )
+  const prHub = useMobileSourceControlPrTab({
+    state,
+    activeTab,
+    worktreeId,
+    prController,
+    prBranch,
+    prHeadSha,
+    ready,
+    selectTab,
+    onRefresh,
+    openCreatePrRef
+  })
+  const { prTab, prScreen, setPrScreen, prMenuGroups, branchCompare } = prHub
 
   // Embedded close dismisses the dock; route Back pops. The dock column owns safe-area chrome.
   const onBack = () => router.back()

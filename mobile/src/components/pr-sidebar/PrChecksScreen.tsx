@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
-import { ChevronDown, CircleCheck, CircleMinus, LoaderCircle, RefreshCw } from 'lucide-react-native'
+import { ChevronDown, CircleCheck, CircleMinus, LoaderCircle } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../theme/mobile-theme'
 import { themedStyleSheet } from '../../theme/themed-styles'
 import { useMobileColorScheme } from '../../theme/use-mobile-color-scheme'
@@ -12,12 +12,13 @@ import { hasGitHubCheckHandle, isBrokenCheck } from '../../../../src/shared/pr-c
 import { sortChecksBySeverity } from '../../../../src/shared/pr-check-severity-order'
 import { fetchPRCheckDetails } from '../../session/github-pr-rpc'
 import { buildFixChecksPrompt } from '../../session/pr-ai-triage-prompt'
-import { NavBarButton } from '../nav-bar/NavBarButton'
 import { DisclosureChevron } from '../DisclosureChevron'
 import { ListGroup, ListRow, SectionHeader, LIST_LEADING_INSET } from '../list/ListGroup'
 import { AgentLaunchNotice } from '../AgentLaunchNotice'
 import { checkOutcome, prCheckKey } from './pr-checks-presentation'
 import { NotReady, ScreenFrame, type ScreenProps } from './pr-tab-screen-frame'
+import { useHostProtocolGates } from '../host-protocol-gates-context'
+import { useMobileLaunchAgentLabel } from '../../session/use-mobile-launch-agent-label'
 import { readyPrData } from './use-mobile-pr-tab'
 import { PrCheckFailureRow } from './PrCheckFailureRow'
 
@@ -35,6 +36,17 @@ export function PrChecksScreen({ tab, onBack, bottomInset = 0 }: ScreenProps) {
     () => checks.filter((check) => checkOutcome(check) === 'failure'),
     [checks]
   )
+  const { hostCapabilities } = useHostProtocolGates()
+  const fixAgent = useMobileLaunchAgentLabel({
+    client: tab.client,
+    worktreeId: tab.worktreeId,
+    hostCapabilities,
+    actionId: 'fixChecks',
+    enabled: failing.length > 0
+  })
+  const fixLabel = fixAgent
+    ? t('pullRequest.screens.fixWith', 'Fix with {{agent}}', { agent: fixAgent })
+    : t('pullRequest.screens.fixWithAi', 'Fix with AI')
   const running = checks.filter((check) => checkOutcome(check) === 'pending')
   const passed = checks.filter((check) => checkOutcome(check) === 'success')
   const other = checks.filter((check) => checkOutcome(check) === 'neutral')
@@ -79,13 +91,6 @@ export function PrChecksScreen({ tab, onBack, bottomInset = 0 }: ScreenProps) {
       title={t('pullRequest.checksSection.title', 'Checks')}
       subtitle={data ? `#${data.pr.number}` : undefined}
       onBack={onBack}
-      trailing={
-        <NavBarButton
-          icon={RefreshCw}
-          onPress={() => tab.refetch({ includeDetails: false })}
-          accessibilityLabel={t('pullRequest.screens.refreshChecks', 'Refresh checks')}
-        />
-      }
     >
       {!data ? (
         <NotReady tab={tab} />
@@ -95,6 +100,7 @@ export function PrChecksScreen({ tab, onBack, bottomInset = 0 }: ScreenProps) {
             failing={failing.length}
             running={running.length}
             passed={passed.length}
+            live={tab.polling}
             t={t}
           />
           {data.checksError ? <Text style={styles.note}>{data.checksError}</Text> : null}
@@ -113,7 +119,7 @@ export function PrChecksScreen({ tab, onBack, bottomInset = 0 }: ScreenProps) {
                     check={check}
                     entry={cache[prCheckKey(check)]}
                     actionable={isBrokenCheck(check)}
-                    fixLabel={t('pullRequest.screens.fixWithAi', 'Fix with AI')}
+                    fixLabel={fixLabel}
                     onFix={() => fixChecks([check])}
                     fixBusy={tab.triage.isBusy('fix-checks')}
                     fixAvailable={tab.triage.availability === 'available'}
@@ -212,11 +218,14 @@ function ChecksSummary({
   failing,
   running,
   passed,
+  live,
   t
 }: {
   failing: number
   running: number
   passed: number
+  // The screen polls while it is open, so it says so instead of offering a refresh button.
+  live: boolean
   t: Translate
 }) {
   useMobileColorScheme()
@@ -240,15 +249,23 @@ function ChecksSummary({
           <View style={[styles.segment, styles.segmentPassed, { flex: passed }]} />
         ) : null}
       </View>
-      <Text style={styles.counts}>
-        {failing > 0 ? (
-          <Text style={styles.countsFailing}>
-            {t('pullRequest.checksSection.failing', '{{count}} failing', { count: failing })}
-          </Text>
+      <View style={styles.countsRow}>
+        <Text style={styles.counts}>
+          {failing > 0 ? (
+            <Text style={styles.countsFailing}>
+              {t('pullRequest.checksSection.failing', '{{count}} failing', { count: failing })}
+            </Text>
+          ) : null}
+          {failing > 0 && rest.length > 0 ? ' · ' : ''}
+          {rest.join(' · ')}
+        </Text>
+        {live ? (
+          <View style={styles.live}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>{t('pullRequest.screens.live', 'Live')}</Text>
+          </View>
         ) : null}
-        {failing > 0 && rest.length > 0 ? ' · ' : ''}
-        {rest.join(' · ')}
-      </Text>
+      </View>
     </View>
   )
 }
@@ -299,8 +316,12 @@ const styles = themedStyleSheet(() => ({
   segmentFailing: { backgroundColor: colors.statusRed },
   segmentRunning: { backgroundColor: colors.statusAmber },
   segmentPassed: { backgroundColor: colors.statusGreen },
-  counts: { color: colors.textSecondary, fontSize: typography.metaSize },
+  counts: { flexShrink: 1, color: colors.textSecondary, fontSize: typography.metaSize },
   countsFailing: { color: colors.statusRed, fontWeight: '600' },
+  countsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  live: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  liveDot: { width: 6, height: 6, borderRadius: radii.pill, backgroundColor: colors.statusGreen },
+  liveText: { color: colors.textSecondary, fontSize: typography.metaSize },
   notes: { paddingHorizontal: spacing.lg, gap: spacing.sm },
   note: { color: colors.statusRed, fontSize: 13, paddingHorizontal: spacing.lg },
   muted: {
